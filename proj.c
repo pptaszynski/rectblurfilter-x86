@@ -46,7 +46,7 @@ void saveBMP(char* fname, BMPHeader* header, unsigned char* data) {
 	return;
 }
 
-extern void erode (unsigned char* inputBMP, int width, int height, unsigned char* outputBMP, int w, int h);
+extern void rectBLur (unsigned char* inputBMP, int width, int height, unsigned char* outputBMP, int w, int h);
 
 int main(void) {
 	clock_t ticks;
@@ -80,11 +80,11 @@ int main(void) {
 	}
 
 	// 
-	// Tutaj leci wszelki wasz preerodeing. Nie mam pojecia co tu mozna wrzucic, wiec odsylam do dokumentacji projektu. ;-)
+	// Tutaj leci wszelki wasz prerectBluring. Nie mam pojecia co tu mozna wrzucic, wiec odsylam do dokumentacji projektu. ;-)
 	//
 
 	ticks = clock() - ticks;
-	printf("Preerodeing: %d == %dms\n", (int)ticks, (int)(ticks*1000/CLOCKS_PER_SEC));
+	printf("Pre bluring: %d == %dms\n", (int)ticks, (int)(ticks*1000/CLOCKS_PER_SEC));
 	ticks = clock();
 	
 	//
@@ -93,26 +93,26 @@ int main(void) {
 
 	x = 0;
 
-	for (i = 1; i < 10; i += 2) {
+	for (i = 1; i < 3; i += 2) {
 		for (z = 0; z < ((-(i-10))^2)+1; ++z) {
-			erode(input1, head[0].width, head[0].height, output1[x], i, i);
-			erode(input2, head[1].width, head[1].height, output2[x], i, i);
-			erode(input3, head[2].width, head[2].height, output3[x], i, i);
-			erode(input4, head[3].width, head[3].height, output4[x], i, i);
-			erode(input5, head[4].width, head[4].height, output5[x], i, i);
+			rectBlur(input1, head[0].width, head[0].height, output1[x], i, i);
+			rectBlur(input2, head[1].width, head[1].height, output2[x], i, i);
+			rectBlur(input3, head[2].width, head[2].height, output3[x], i, i);
+			rectBlur(input4, head[3].width, head[3].height, output4[x], i, i);
+			rectBlur(input5, head[4].width, head[4].height, output5[x], i, i);
 		}
 		++x;
 	}
 
-	erode(input1, head[0].width, head[0].height, output1[5], 35, 35);
-	erode(input2, head[1].width, head[1].height, output2[5], 35, 35);
-	erode(input3, head[2].width, head[2].height, output3[5], 35, 35);
-	erode(input4, head[3].width, head[3].height, output4[5], 35, 35);
-	erode(input5, head[4].width, head[4].height, output5[5], 35, 35);
+	rectBlur(input1, head[0].width, head[0].height, output1[5], 35, 35);
+	rectBlur(input2, head[1].width, head[1].height, output2[5], 35, 35);
+	rectBlur(input3, head[2].width, head[2].height, output3[5], 35, 35);
+	rectBlur(input4, head[3].width, head[3].height, output4[5], 35, 35);
+	rectBlur(input5, head[4].width, head[4].height, output5[5], 35, 35);
 
 
 	ticks = clock() - ticks;
-	printf("erodeing: %d == %dms\n", (int)ticks, (int)(ticks*1000/CLOCKS_PER_SEC));
+	printf("rectBluring: %d == %dms\n", (int)ticks, (int)(ticks*1000/CLOCKS_PER_SEC));
 
 	ticks = clock();
 
