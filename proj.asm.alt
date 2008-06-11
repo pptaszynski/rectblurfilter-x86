@@ -1,0 +1,436 @@
+%define	FWIDTH		[ebp-4]
+%define FHEIGHT		[ebp-8]
+%define IMGSIZE		[ebp-12]
+%define CYCLEBUFF	[ebp-16]
+%define CYCLEBUFFLAST	[ebp-20]
+%define X			[ebp-24]
+%define Y			[ebp-28]
+%define CURRBH		[ebp-32]
+%define LIMIT		[ebp-44]
+%define RSUM		[ebp-48]
+%define GSUM		[ebp-52]
+%define ROWL		[ebp-56]
+%define	MASKBEGADR	[ebp-68]		
+%define	AVGB		[ebp-72]
+%define AVGR		[ebp-76]
+%define	AVGG		[ebp-80]
+%define	PREV		[ebp-84]
+%define	BSUM		[ebp-88]
+%define BUFFPOS		[ebp-92]
+%define	DSTPOS		[ebp-96]
+%define	SRCPOS		[ebp-100]
+
+; MACRO DIV PIXEL
+;
+; %1 - GSUM, %2 - RSUM, %3 - BSUM, %4 - DENOM, %5 - HELPmem
+%macro DIVPIXEL	5
+	xor		%5, %5
+	mov		eax, %1
+	div		%4
+	shl		eax, 16
+	and		eax, 0X00FF0000	
+	or		%5, eax
+	mov		eax, %2 
+	div		%4
+	shl		eax, 8
+	and		eax, 0x0000FF00
+	or		%5, eax
+	mov		eax, %3
+	div		%4
+	and		eax, 0x000000FF
+	or		eax, %5
+%endmacro
+
+global rectBlur
+global computeBuffPix
+global getPixel
+extern malloc
+extern free
+
+	section .text
+
+;;
+;;
+;;	computeBuffPix (char * src, int width, int filterheight)
+;;  
+;;	Computes an "average" pixel from buffer column
+;;
+;;
+
+computeBuffPix:
+		; Prolog
+		push	ebp
+        mov		ebp, esp
+		sub		esp, 12
+		push	edi
+		push	esi
+		push	ebx
+		
+		xor		eax, eax
+		mov		[ebp-4], eax		;	BSUM
+		mov		[ebp-8], eax		;	RSUM
+		mov		[ebp-12], eax		;	GSUM
+		mov		esi, [ebp+8]
+		mov		ecx, [ebp+16]
+		mov		edx, [ebp+12]
+		shl		edx, 2				;	edx = byte_lenght_of_row
+		cbpLoop:
+				lodsd
+				sub		esi, 4
+				mov		ebx, eax	
+				; ADD G VALUE
+				and		ebx, 0x00FF0000
+				shr		ebx, 16
+				add		[ebp-12], ebx
+				; ADD R VALUE
+				mov		ebx, eax
+				and		ebx, 0x0000FF00
+				shr		ebx, 8
+				add		[ebp-8], ebx
+				; ADD B VALUE
+				mov		ebx, eax
+				and		ebx, 0x000000FF
+				add		[ebp-4], ebx
+							
+				add		esi, edx
+		loop	cbpLoop
+		
+		;; DIV TO GET AVERAGE
+		mov		ecx, [ebp+16]
+		;DIVPIXEL	[ebp-12], [ebp-8], [ebp-4], ecx, ebx, eax
+		xor		ebx,ebx
+		mov		eax, [ebp-12]
+		cdq
+		idiv		ecx
+		shl		eax, 16
+		and		eax, 0X00FF0000	
+		or		ebx, eax
+		mov		eax, [ebp-8] 
+		div		ecx
+		shl		eax, 8
+		and		eax, 0x0000FF00
+		or		ebx, eax
+		mov		eax, [ebp-4]
+		div		ecx
+		and		eax, 0x000000FF
+		or		eax, ebx
+		; Epilog
+		pop		ebx
+		pop		edi
+		pop		esi
+		
+		add		esp, 12
+
+		leave
+        ret
+;; computeBuffPix END
+;
+
+;
+;	Argumenty wywolania:
+;
+;	[ebp+8]		*src
+;	[ebp+12]	widht		
+;	[ebp+16]	height
+;	[ebp+20]	*dest
+;	[ebp+24]	fwidth
+;	[ebp+28]	fheight
+;
+
+rectBlur:
+		; Prolog
+		push	ebp
+        mov		ebp, esp
+		sub		esp, 120
+		push	edi
+		push	esi
+		push	ebx
+
+		; oblicz FWIDTH
+		mov		eax, [ebp+24]
+		shl		eax,1
+		inc		eax
+		mov		FWIDTH, eax
+
+		; oblicz FHEIGHT
+		mov		eax, [ebp+28]
+		shl		eax, 1
+		inc		eax
+		mov		FHEIGHT, eax
+
+		; oblicz IMGSIZE
+		mov		eax, [ebp+12]
+		mov		edx, [ebp+16]
+		mul		edx
+		shl		eax, 2
+		mov		IMGSIZE, eax
+		
+		; oblicz LIMIT
+		
+		mov		eax, [ebp+8]
+		add		eax, IMGSIZE
+		mov		LIMIT, eax
+
+		; oblicz ROWL
+		mov		eax, [ebp+12]
+		lea		ebx, [eax+03*eax]
+		mov		ROWL, ebx
+
+	
+		;	przygotuj bufor cykliczny w pamieci
+		mov		ecx, FWIDTH
+		shl		ecx, 2
+		mov		eax, ecx
+		push	ecx
+		push	eax
+		call	malloc					; Zwraca adres zaalokowanego obszaru w eax
+		add		esp, 4
+		pop		ecx
+		mov		CYCLEBUFF, eax
+		sub		ecx, 4
+		add		eax, ecx
+		mov		CYCLEBUFFLAST, eax
+		
+		mov		Y, dword 0x0
+		mov		X, dword 0x0
+		
+		mov		ecx, [ebp+8]
+		mov		SRCPOS, ecx
+		mov		ecx, [ebp+20]
+		mov		DSTPOS, ecx
+		; ESI - *src
+		; EDI - *dst
+
+		; ECX - height
+
+		VERT:
+				mov		eax, Y	; eax = vertical_position
+	
+			fillbuff:				
+				;; PREPARE A CYCLE BUFFOR WITH COMPTUED AVERAGE
+				;; PIXELS IN A FILTER WINDOW`s COLUMNS
+
+				; COMPUTE THEORETICAL ADRES TO A FIRST PIXEL UNDER FILTER MASK
+				mov		edx, [ebp+28]	; edx = h (filter 'one way' height)
+				sub		edx, eax		; edx = h - vert_pos
+				mov		ebx, FHEIGHT	; ebx = filter_height
+				mov		edi, ebx
+				sub		edi, edx		; ebx = new_filter_height
+				;mov		edi, ebx		; do not change edx - it contains value to compare
+				mov		esi, [ebp+16]
+				dec		esi				; esi = img_height-1
+				sub		esi, eax
+				add		esi, [ebp+28]; esi =  new_filter_height
+				mov		ecx, eax
+				add		ecx, ebx
+				cmp		ecx, [ebp+16]
+				cmovge	ebx, esi
+				xor		ecx, ecx
+				cmp		edx, ecx		; if edx > 0
+				cmovg   ebx, edi        ; ebx = edx
+
+				mov		CURRBH, ebx
+				
+				mov		edx, ROWL
+				mov		esi, [ebp+8]
+				mov		edi, esi
+				sub		eax, [ebp+28]
+				imul	edx
+				add		esi, eax
+				
+				cmp		esi, edi
+				cmovle   esi,[ebp+8]
+				
+
+				add		edi, IMGSIZE
+				mov		ecx, esi
+				sub		ecx, ROWL
+				mov		eax, ebx
+				mov		edx, ROWL
+				mul		edx
+				sub		edi, eax
+				cmp		esi, edi
+				cmovge	esi, ecx
+				cmp		esi, edi
+				cmovle   esi,[ebp+8]
+				mov		MASKBEGADR, esi
+				
+				;; call for computeBuffPix
+				push	ebx
+				push	dword [ebp+12]
+				push	esi
+				call	computeBuffPix
+				add		esp, 12
+
+				mov		edi, CYCLEBUFF
+				stosd		
+				;; FILL FIRST W+1 BUFFER POSITIONS - EXTEND LEFT EDGE
+				mov		ecx, [ebp+24]
+				extLEdgeLoop:
+					stosd
+				loop	extLEdgeLoop
+				mov		BUFFPOS, edi
+
+				;; NOW WE HAVE FILLED FIRST W+1 POS. OF BUFFER WITH
+				;; THE AVERAGE VALUES OF LEFT EDGE PIXELS
+
+				;; FILL REST OF BUFFER
+				;; EDI - CURRENT BUFFER POS ADRES
+				;; ESI - BEG OF MASK ADR
+				mov		ecx, [ebp+24]
+				mov		esi, MASKBEGADR
+				makeBuffXLoop:
+					push	ecx
+					add		esi, 0x4
+					mov		ecx, esi
+					sub		ecx, 0x4
+					cmp		esi, LIMIT
+					cmovge	esi, ecx
+					mov		MASKBEGADR, esi
+					
+					push	dword CURRBH
+					push	dword [ebp+12]
+					push	esi
+					call	computeBuffPix
+					add		esp, 12
+					
+					stosd
+
+					mov		BUFFPOS, edi
+
+					pop		ecx
+				loop	makeBuffXLoop
+
+				mov		esi, CYCLEBUFF
+				mov		BUFFPOS, esi
+				
+				xor		eax, eax
+
+				HORIZ:
+					push	ecx
+					mov		X, eax
+					;; COMPUTE AV VALUES FOR PIXEL
+					xor		ebx, ebx
+					mov		BSUM, ebx
+					mov		RSUM, ebx
+					mov		GSUM, ebx
+					mov		esi, CYCLEBUFF
+					_sumBuff:
+						lodsd
+						
+						mov		ebx, eax	
+						; ADD B VALUE
+						and		ebx, 0x00FF0000
+						shr		ebx, 16
+						add		GSUM, ebx
+						; ADD R VALUE
+						mov		ebx, eax
+						and		ebx, 0x0000FF00
+						shr		ebx, 8
+						add		RSUM, ebx
+						; ADD G VALUE
+						mov		ebx, eax
+						and		ebx, 0x000000FF
+						;shr		eax, 8
+						add		BSUM, ebx
+						cmp		esi, CYCLEBUFFLAST
+					jl _sumBuff
+
+						;DIVPIXEL	dword GSUM, dword RSUM,  dword BSUM,  dword FWIDTH, ebx
+						
+						xor		ebx,ebx
+						mov		ecx, dword FWIDTH
+						mov		eax, GSUM
+						cdq
+						idiv	ecx
+						shl		eax, 16
+						and		eax, 0X00FF0000	
+						or		ebx, eax
+						mov		eax, RSUM
+						div		ecx
+						shl		eax, 8
+						and		eax, 0x0000FF00
+						or		ebx, eax
+						mov		eax, BSUM
+						div		ecx
+						and		eax, 0x000000FF
+						or		eax, ebx	
+
+						mov		ebx, eax
+
+						mov		esi, SRCPOS
+						lodsd
+						and		eax, 0xFF000000
+						or		eax, ebx
+						
+						mov		SRCPOS, esi
+
+						mov	    edi, dword DSTPOS
+						stosd
+						mov		DSTPOS, edi
+						
+						mov		ecx, [ebp+12]
+						dec		ecx
+						mov		eax, X
+						add		eax, [ebp+24]
+						cmp		eax, ecx
+						jl		addToBuff
+							mov		esi, CYCLEBUFFLAST
+							mov		eax, [esi]
+							mov		edi, BUFFPOS
+							stosd
+							cmp		edi, CYCLEBUFFLAST
+							cmovg	edi, CYCLEBUFF
+							mov		edi, BUFFPOS
+							jmp		addedToBuff
+						;; REPLACE NEXT COLUMN IN BUFFER
+						addToBuff:
+						push	dword CURRBH
+						push	dword [ebp+12]
+						push	dword MASKBEGADR
+						call	computeBuffPix
+						add		esp, 12
+
+						mov		edi, BUFFPOS
+						stosd
+						
+						mov		esi, MASKBEGADR
+						add		esi, 0x4
+						mov		MASKBEGADR, esi
+						cmp		edi, CYCLEBUFFLAST
+						cmovg	edi, CYCLEBUFF
+						mov		BUFFPOS, edi
+						
+						addedToBuff:
+						mov		eax, X
+						inc		eax
+						mov		X, eax
+						mov		ecx, [ebp+12]
+						dec		ecx
+						cmp		eax, ecx
+					jl HORIZ	
+				mov		eax, Y
+				inc		eax
+				mov		Y, eax
+				mov		ecx, [ebp+16]
+				dec		ecx
+				cmp		eax, ecx
+			jl		VERT
+
+
+end:
+		; Epilog
+		mov		eax, CYCLEBUFF
+		push	eax
+		call	free
+		add		esp, 4
+
+		pop		ebx
+		pop		edi
+		pop		esi
+
+		add		esp, 120
+
+		leave
+        ret
+
